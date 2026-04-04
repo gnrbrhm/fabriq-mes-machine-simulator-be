@@ -148,8 +148,15 @@ async function main() {
     const [h, m] = startTimeStr.split(':').map(Number);
     const startDate = new Date();
     startDate.setHours(h, m || 0, 0, 0);
+
+    // Pazar ise Pazartesi'ye atla (fabrika Pazar kapali)
+    if (startDate.getDay() === 0) {
+      startDate.setDate(startDate.getDate() + 1);
+      console.log(`⚠️  Bugun Pazar - Pazartesi'ye atlanıyor: ${startDate.toLocaleDateString('tr-TR')}`);
+    }
+
     clock.setSimTime(startDate);
-    console.log(`⏰ Baslangic saati: ${startDate.toLocaleTimeString('tr-TR')}`);
+    console.log(`⏰ Baslangic: ${startDate.toLocaleDateString('tr-TR')} ${startDate.toLocaleTimeString('tr-TR')}`);
   }
 
   // 6. Istatistikler

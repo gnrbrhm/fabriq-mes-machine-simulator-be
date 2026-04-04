@@ -9,6 +9,8 @@
     "seed-only": "tsx src/main.ts --seed-only",
     "reset": "tsx src/main.ts --reset --seed-only",
     "reset:start": "tsx src/main.ts --reset --start 06:00 --speed 15",
+    "reset:full": "bash scripts/reset-and-start.sh",
+    "reset:fast": "bash scripts/reset-and-start.sh 60 06:00",
     "build": "tsup src/main.ts --format cjs --dts",
     "typecheck": "tsc --noEmit"
   },
