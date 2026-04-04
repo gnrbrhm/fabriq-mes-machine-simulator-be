@@ -240,4 +240,366 @@ export class ApiClient {
       await this.api.post('/sustainability/energy', data);
     } catch {}
   }
+
+  // ─── Tedarik (Procurement) ────────────────────────────────────
+
+  /**
+   * Tedarikci olustur
+   */
+  async createSupplier(data: {
+    code: string;
+    name: string;
+    contactPerson?: string;
+    email?: string;
+    phone?: string;
+    address?: string;
+    taxId?: string;
+    category?: string;
+  }): Promise<any> {
+    try {
+      const res = await this.api.post('/suppliers', data);
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Tum tedarikcileri getir
+   */
+  async getSuppliers(): Promise<any[]> {
+    try {
+      const res = await this.api.get('/suppliers');
+      return res.data?.data || res.data || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Satin alma siparisi olustur
+   */
+  async createPurchaseOrder(data: {
+    supplierId: string;
+    expectedDeliveryDate: string;
+    priority?: string;
+    notes?: string;
+    items: Array<{
+      materialCode: string;
+      quantity: number;
+      unitPrice: number;
+      unit?: string;
+    }>;
+  }): Promise<any> {
+    try {
+      const res = await this.api.post('/purchase-orders', data);
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Satin alma siparisini onayla
+   */
+  async approvePurchaseOrder(id: string): Promise<any> {
+    try {
+      const res = await this.api.patch(`/purchase-orders/${id}/approve`);
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Satin alma siparisini gonder
+   */
+  async sendPurchaseOrder(id: string): Promise<any> {
+    try {
+      const res = await this.api.patch(`/purchase-orders/${id}/send`);
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Mal kabul olustur
+   */
+  async createGoodsReceipt(data: {
+    purchaseOrderId: string;
+    receivedDate?: string;
+    notes?: string;
+    items: Array<{
+      materialCode: string;
+      quantityReceived: number;
+      lotNumber?: string;
+    }>;
+  }): Promise<any> {
+    try {
+      const res = await this.api.post('/goods-receipts', data);
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Mal kabul onayla
+   */
+  async acceptGoodsReceipt(id: string): Promise<any> {
+    try {
+      const res = await this.api.patch(`/goods-receipts/${id}/accept`);
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Mal kabul reddet
+   */
+  async rejectGoodsReceipt(id: string, reason: string): Promise<any> {
+    try {
+      const res = await this.api.patch(`/goods-receipts/${id}/reject`, { reason });
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // ─── Is Emri Durum Makinesi ───────────────────────────────────
+
+  /**
+   * Is emrini beklet (hold)
+   */
+  async holdJobOrder(id: string, holdReason: string, changedBy: string): Promise<any> {
+    try {
+      const res = await this.api.patch(`/job-orders/${id}/hold`, { holdReason, changedBy });
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Is emrini serbest birak (release)
+   */
+  async releaseJobOrder(id: string, changedBy: string): Promise<any> {
+    try {
+      const res = await this.api.patch(`/job-orders/${id}/release`, { changedBy });
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Is emrini iptal et
+   */
+  async cancelJobOrder(id: string, cancelReason: string, changedBy: string): Promise<any> {
+    try {
+      const res = await this.api.patch(`/job-orders/${id}/cancel`, { cancelReason, changedBy });
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Is emrini bol
+   */
+  async splitJobOrder(id: string, splitQuantity: number, reason: string, changedBy: string): Promise<any> {
+    try {
+      const res = await this.api.post(`/job-orders/${id}/split`, { splitQuantity, reason, changedBy });
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Oncelik degistir
+   */
+  async changePriority(id: string, priority: string, reason: string, changedBy: string): Promise<any> {
+    try {
+      const res = await this.api.patch(`/job-orders/${id}/priority`, { priority, reason, changedBy });
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Yeniden islem emri olustur
+   */
+  async createReworkOrder(id: string, quantity: number, reason: string, changedBy: string): Promise<any> {
+    try {
+      const res = await this.api.post(`/job-orders/${id}/rework`, { quantity, reason, changedBy });
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // ─── Cizelgeleme (Scheduling) ─────────────────────────────────
+
+  /**
+   * Makine kuyruğuna is emri ekle
+   */
+  async addToQueue(machineId: string, jobOrderId: string, priority?: number): Promise<any> {
+    try {
+      const res = await this.api.post('/scheduling/queue', { machineId, jobOrderId, priority });
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Makine kuyruğunu getir
+   */
+  async getQueue(machineId: string): Promise<any[]> {
+    try {
+      const res = await this.api.get(`/scheduling/queue/${machineId}`);
+      return res.data?.data || res.data || [];
+    } catch {
+      return [];
+    }
+  }
+
+  // ─── Sevkiyat (Shipment) ──────────────────────────────────────
+
+  /**
+   * Sevkiyat olustur
+   */
+  async createShipment(data: {
+    customer: string;
+    deliveryDate: string;
+    items: Array<{
+      materialCode: string;
+      quantity: number;
+      jobOrderId?: string;
+    }>;
+    notes?: string;
+  }): Promise<any> {
+    try {
+      const res = await this.api.post('/shipments', data);
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Sevkiyat gonder
+   */
+  async shipShipment(id: string, carrier: string, trackingNo: string): Promise<any> {
+    try {
+      const res = await this.api.patch(`/shipments/${id}/ship`, { carrier, trackingNo });
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // ─── Stok Alarmlari ───────────────────────────────────────────
+
+  /**
+   * Stok alarmlarini kontrol et
+   */
+  async checkStockAlerts(): Promise<any> {
+    try {
+      const res = await this.api.post('/stock-alerts/check');
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Aktif alarmlari getir
+   */
+  async getActiveAlerts(): Promise<any[]> {
+    try {
+      const res = await this.api.get('/stock-alerts', { params: { status: 'active' } });
+      return res.data?.data || res.data || [];
+    } catch {
+      return [];
+    }
+  }
+
+  // ─── Musteri Sikayet ──────────────────────────────────────────
+
+  /**
+   * Musteri sikayeti olustur
+   */
+  async createComplaint(data: {
+    customer: string;
+    complaintType: string;
+    description: string;
+    materialCode?: string;
+    quantity?: number;
+    jobOrderId?: string;
+    severity?: string;
+  }): Promise<any> {
+    try {
+      const res = await this.api.post('/customer-complaints', data);
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // ─── Bakim Is Emirleri ────────────────────────────────────────
+
+  /**
+   * Bakim is emri olustur
+   */
+  async createMaintenanceWorkOrder(data: {
+    machineId: string;
+    type: string;
+    priority: string;
+    description: string;
+    estimatedDurationMin?: number;
+    spareParts?: Array<{ code: string; quantity: number }>;
+  }): Promise<any> {
+    try {
+      const res = await this.api.post('/maintenance/work-orders', data);
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // ─── Malzeme Guncelleme ───────────────────────────────────────
+
+  /**
+   * Malzeme ayarlarini guncelle (minStock, reorderPoint vb.)
+   */
+  async updateMaterial(code: string, data: {
+    minStock?: number;
+    reorderPoint?: number;
+    maxStock?: number;
+  }): Promise<any> {
+    try {
+      const res = await this.api.patch(`/materials/${code}`, data);
+      return res.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Malzeme stok bilgisini getir
+   */
+  async getStockSummary(materialCode?: string): Promise<any[]> {
+    try {
+      const params = materialCode ? { materialCode } : {};
+      const res = await this.api.get('/stock-summary', { params });
+      return res.data?.data || res.data || [];
+    } catch {
+      return [];
+    }
+  }
 }

@@ -28,6 +28,7 @@ import { ApiSeeder } from './upstream/api.seeder';
 import { ApiClient } from './upstream/api.client';
 import { MaintenanceSimulator } from './production/maintenance.simulator';
 import { SpcSimulator } from './production/spc.simulator';
+import { ProductionPlanner } from './production/production-planner';
 
 // ─── Konfigurasyon ───────────────────��──────────────────────────
 
@@ -42,6 +43,8 @@ const speedIdx = args.indexOf('--speed');
 const simSpeed = speedIdx >= 0 ? parseFloat(args[speedIdx + 1] || '1') : parseFloat(process.env.SIMULATION_SPEED || '1');
 const startIdx = args.indexOf('--start');
 const startTimeStr = startIdx >= 0 ? args[startIdx + 1] : null;
+const planIdx = args.indexOf('--plan');
+const planMode = planIdx >= 0 ? args[planIdx + 1] : null;
 
 // ─── Ana Fonksiyon ──────────���───────────────────────────────────
 
@@ -121,6 +124,19 @@ async function main() {
   // 3. API Client (backend'den is emri okumak icin)
   const apiClient = new ApiClient(API_BASE_URL);
   await apiClient.authenticate();
+
+  // 3b. Uretim planlayici (--plan 3months)
+  if (planMode === '3months') {
+    console.log('\n📋 3 Aylik Uretim Plani baslatiliyor...\n');
+    const planner = new ProductionPlanner(apiClient);
+    try {
+      await planner.runFullPlan(new Date());
+      console.log('\n📋 Uretim plani tamamlandi, simulasyon devam ediyor...\n');
+    } catch (err: any) {
+      console.error(`⚠️ Uretim plani hatasi: ${err.message}`);
+      // Devam et - plan hatasi simulasyonu durdurmasin
+    }
+  }
 
   // 4. Sistemler olustur
   const eventBus = new EventBus();
