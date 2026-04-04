@@ -44,6 +44,9 @@ export class ApiSeeder {
     // 5. Malzemeler
     await this.seedMaterials();
 
+    // 6. Lokasyonlar (stok hareketleri icin)
+    await this.seedLocations();
+
     console.log('\n✅ Seed tamamlandi!\n');
   }
 
@@ -68,8 +71,6 @@ export class ApiSeeder {
         name: FACTORY_CONFIG.edgeGatewayName,
         factorySite: FACTORY_CONFIG.factorySite,
         ipAddress: '192.168.1.100',
-        version: '2.1.0',
-        status: 'online',
       });
       console.log(`  ✅ Edge Gateway: ${FACTORY_CONFIG.edgeGatewayId}`);
     } catch (err: any) {
@@ -205,5 +206,69 @@ export class ApiSeeder {
     }
 
     console.log(`  ✅ Malzemeler: ${created} yeni, ${existing} mevcut (toplam ${allMaterials.length})`);
+  }
+
+  /**
+   * Lokasyon seed - stok hareketleri icin gerekli
+   */
+  async seedLocations() {
+    // Once lokasyon tipi ve zon ID'lerini bul
+    let typeId = '';
+    let zoneId = '';
+
+    try {
+      const typesRes = await this.api.get('/location-types');
+      const types = typesRes.data?.data || typesRes.data || [];
+      typeId = types[0]?.id || '';
+      console.log(`     Lokasyon tipi: ${types.length} adet, secilen: ${typeId.substring(0, 8)}...`);
+    } catch (err: any) {
+      console.log(`  ⚠️  Lokasyon tipi alinamadi: ${err.message}`);
+    }
+
+    try {
+      const zonesRes = await this.api.get('/zones');
+      const zones = zonesRes.data?.data || zonesRes.data || [];
+      zoneId = zones[0]?.id || '';
+      console.log(`     Zon: ${zones.length} adet, secilen: ${zoneId.substring(0, 8)}...`);
+    } catch (err: any) {
+      console.log(`  ⚠️  Zon alinamadi: ${err.message}`);
+    }
+
+    if (!typeId || !zoneId) {
+      console.log(`  ⚠️  typeId=${typeId}, zoneId=${zoneId} - lokasyonlar olusturulamadi`);
+      return;
+    }
+
+    const locations = [
+      { code: 'HAM-A01', rack: '01', aisle: 'A' },
+      { code: 'HAM-A02', rack: '02', aisle: 'A' },
+      { code: 'URT-B01', rack: '01', aisle: 'B' },
+      { code: 'URT-B02', rack: '02', aisle: 'B' },
+      { code: 'MAM-C01', rack: '01', aisle: 'C' },
+      { code: 'SEVK-D01', rack: '01', aisle: 'D' },
+    ];
+
+    let created = 0;
+    let existing = 0;
+
+    for (const loc of locations) {
+      try {
+        await this.api.post('/locations', {
+          code: loc.code,
+          structure: { rackNo: loc.rack, aisle: loc.aisle },
+          typeId,
+          zoneId,
+        });
+        created++;
+      } catch (err: any) {
+        if (err.response?.status === 409) {
+          existing++;
+        } else {
+          console.log(`     ⚠️  Lokasyon hatasi [${loc.code}]: ${err.response?.data?.message || err.message}`);
+        }
+      }
+    }
+
+    console.log(`  ✅ Lokasyonlar: ${created} yeni, ${existing} mevcut`);
   }
 }

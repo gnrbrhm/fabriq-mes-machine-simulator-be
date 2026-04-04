@@ -26,6 +26,10 @@ export class ClockService {
     return new Date(this.simTime);
   }
 
+  setSimTime(date: Date) {
+    this.simTime = new Date(date);
+  }
+
   getSpeed(): number {
     return this.speed;
   }
@@ -47,9 +51,10 @@ export class ClockService {
     if (this.running) return;
     this.running = true;
     this.startTime = new Date();
-    this.simTime = new Date();
+    // simTime zaten set edildiyse (setSimTime ile) onu koru
+    // set edilmediyse guncel saat kullan (varsayilan constructor'da set edildi)
 
-    console.log(`[Clock] Baslatildi (${this.speed}x hiz, ${intervalMs}ms aralik)`);
+    console.log(`[Clock] Baslatildi (${this.speed}x hiz, ${intervalMs}ms aralik, sim saat: ${this.simTime.toLocaleTimeString('tr-TR')})`);
 
     this.intervalHandle = setInterval(async () => {
       const deltaSec = (intervalMs / 1000) * this.speed;

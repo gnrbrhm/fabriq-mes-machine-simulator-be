@@ -141,4 +141,76 @@ export class KafkaPublisher {
       }],
     });
   }
+
+  /**
+   * Is emri durum degisikligi (mes.production.job-order-status)
+   */
+  async publishJobOrderStatus(
+    jobOrderNo: string,
+    status: string,
+    machineId: string,
+    quantityProduced: number,
+    quantityPlanned: number,
+    quantityScrapped: number,
+    materialCode?: string,
+    materialName?: string,
+    operation?: string,
+    customer?: string,
+  ) {
+    if (!this.connected) return;
+
+    const event = {
+      jobOrderId: jobOrderNo,
+      jobOrderNo,
+      previousStatus: status === 'started' ? 'created' : 'started',
+      currentStatus: status,
+      changedBy: 'simulator',
+      machineId,
+      quantityProduced,
+      quantityPlanned,
+      quantityScrapped,
+      materialCode: materialCode || '',
+      materialName: materialName || jobOrderNo,
+      operation: operation || 'production',
+      customer: customer || '',
+      progress: quantityPlanned > 0 ? Math.round((quantityProduced / quantityPlanned) * 100) : 0,
+      timestamp: new Date().toISOString(),
+    };
+
+    await this.producer.send({
+      topic: 'mes.production.job-order-status',
+      messages: [{
+        key: jobOrderNo,
+        value: JSON.stringify(event),
+      }],
+    });
+  }
+
+  /**
+   * Malzeme tuketim event (mes.production.material-consumption)
+   */
+  async publishMaterialConsumption(
+    jobOrderNo: string,
+    machineId: string,
+    materialCode: string,
+    quantity: number,
+    unit: string,
+  ) {
+    if (!this.connected) return;
+
+    await this.producer.send({
+      topic: 'mes.production.material-consumption',
+      messages: [{
+        key: jobOrderNo,
+        value: JSON.stringify({
+          jobOrderNo,
+          machineId,
+          materialCode,
+          quantity,
+          unit,
+          timestamp: new Date().toISOString(),
+        }),
+      }],
+    });
+  }
 }

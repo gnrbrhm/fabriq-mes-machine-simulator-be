@@ -189,6 +189,7 @@ export class MachineSimulator {
   startProduction(simTime: Date): boolean {
     if (this.stateMachine.getState() === 'idle') {
       this.warmupElapsedSec = 0;
+      this.tagGenerator.resetWarmup();
       return this.stateMachine.transition('warmup', simTime);
     }
     return false;
@@ -253,6 +254,7 @@ export class MachineSimulator {
         // 10-20 dakika setup
         if (duration > gaussian(900, 180)) {
           this.warmupElapsedSec = 0;
+          this.tagGenerator.resetWarmup();
           this.stateMachine.transition('warmup', simTime);
         }
         break;
