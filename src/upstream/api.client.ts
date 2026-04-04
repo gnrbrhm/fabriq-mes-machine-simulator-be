@@ -224,4 +224,20 @@ export class ApiClient {
       await this.api.post('/spc/measurements/batch', { measurements });
     } catch {}
   }
+
+  // ─── Enerji ───────────────────────────────────────────────────
+
+  /**
+   * Enerji tuketim kaydi gonder
+   */
+  async sendEnergyConsumption(data: {
+    equipmentId?: string;
+    date: string;
+    electricityKwh: number;
+    source?: string;
+  }): Promise<void> {
+    try {
+      await this.api.post('/sustainability/energy', data);
+    } catch {}
+  }
 }

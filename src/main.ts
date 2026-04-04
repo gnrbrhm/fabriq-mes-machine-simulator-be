@@ -128,6 +128,7 @@ async function main() {
   const shiftSim = new ShiftSimulator(eventBus);
   const jobSim = new JobOrderSimulator(apiClient);
   const energySim = new EnergySimulator();
+  energySim.setApiClient(apiClient);
   const maintenanceSim = new MaintenanceSimulator(apiClient, eventBus);
   const spcSim = new SpcSimulator(apiClient);
 
@@ -303,11 +304,11 @@ async function main() {
       }
     }
 
-    // C. Enerji snapshot (5 dk'da bir)
-    const energySnap = energySim.tick(machines, simTime, deltaSec);
+    // C. Enerji snapshot (5 dk'da bir) → backend'e gonder
+    const energySnap = await energySim.tick(machines, simTime, deltaSec);
     if (energySnap) {
       const kwh = energySim.getTotalKwhToday();
-      console.log(`  ⚡ Enerji: ${energySnap.totalElectricityKw.toFixed(0)} kW | ${kwh.toFixed(1)} kWh | Bakim: ${maintenanceSim.getTotalMaintenanceCount()} | SPC: ${spcSim.getTotalMeasurements()} olcum`);
+      console.log(`  ⚡ Enerji: ${energySnap.totalElectricityKw.toFixed(0)} kW | ${kwh.toFixed(1)} kWh (${energySim.getTotalSentToBackend()} backend kayit) | Bakim: ${maintenanceSim.getTotalMaintenanceCount()} | SPC: ${spcSim.getTotalMeasurements()} olcum`);
     }
 
     // C2. SPC olcum uretimi (saatlik)
