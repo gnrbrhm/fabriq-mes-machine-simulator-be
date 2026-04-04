@@ -26,6 +26,8 @@ import { EnergySimulator } from './energy/energy.simulator';
 import { KafkaPublisher } from './upstream/kafka.publisher';
 import { ApiSeeder } from './upstream/api.seeder';
 import { ApiClient } from './upstream/api.client';
+import { MaintenanceSimulator } from './production/maintenance.simulator';
+import { SpcSimulator } from './production/spc.simulator';
 
 // ─── Konfigurasyon ───────────────────��──────────────────────────
 
@@ -98,11 +100,15 @@ async function main() {
   const shiftSim = new ShiftSimulator(eventBus);
   const jobSim = new JobOrderSimulator(apiClient);
   const energySim = new EnergySimulator();
+  const maintenanceSim = new MaintenanceSimulator(apiClient, eventBus);
+  const spcSim = new SpcSimulator(apiClient);
 
-  // BOM'lari yukle (backend'den)
+  // Backend'den master veri yukle
   await jobSim.loadBoms();
+  await maintenanceSim.loadProfiles();
+  await spcSim.loadCharacteristics();
 
-  // 4. Makine simulatorleri
+  // 5. Makine simulatorleri
   const machines: MachineSimulator[] = FACTORY_CONFIG.machines.map(
     (config) => new MachineSimulator(config, eventBus),
   );
@@ -122,6 +128,7 @@ async function main() {
   let totalTelemetryMessages = 0;
   let totalAlarms = 0;
   let lastLogTime = 0;
+  let totalSimElapsedSec = 0; // Toplam simulasyon saniyesi
 
   // 7. Event dinleyicileri
   eventBus.on(SimEvents.PART_PRODUCED, async (data) => {
@@ -183,6 +190,8 @@ async function main() {
   console.log(`\n🚀 Simulasyon baslatiliyor (${simSpeed}x hiz)...\n`);
 
   clock.onTick(async (simTime, deltaSec) => {
+    totalSimElapsedSec += deltaSec;
+
     // A. Vardiya kontrolu
     await shiftSim.tick(simTime);
     const phase = shiftSim.getCurrentPhase();
@@ -199,18 +208,36 @@ async function main() {
         machine.turnOn(simTime);
         machine.startProduction(simTime);
       } else if (shouldRun && currentState === 'idle') {
-        machine.startProduction(simTime);
+        // Bakim kontrolu - bakim gerekiyorsa maintenance moduna al
+        const maintCheck = maintenanceSim.tick(machineId, false, deltaSec, totalSimElapsedSec);
+        if (maintCheck.needsMaintenance) {
+          machine.startMaintenance(simTime);
+          console.log(`  🔧 ${machineId} BAKIM GEREKLI (${maintCheck.maintenanceType})`);
+        } else {
+          machine.startProduction(simTime);
+        }
+      } else if (shouldRun && currentState === 'maintenance') {
+        // Bakim suresi doldu mu? (state machine otomatik idle'a dondurecek)
+        // idle'a donunce bir sonraki tick'te maintenanceCompleted cagirilacak
       } else if (!shouldRun && (currentState === 'running' || currentState === 'warmup')) {
         machine.stopProduction(simTime);
       }
 
+      // Bakim tamamlandi kontrolu (maintenance → idle gecisi olduysa)
+      if (currentState === 'maintenance' && machine.getState() === 'idle') {
+        await maintenanceSim.maintenanceCompleted(machineId);
+      }
+
+      // Calisma saati takibi (running ise)
+      maintenanceSim.tick(machineId, machine.getState() === 'running', deltaSec, totalSimElapsedSec);
+
       // Is emri atama - backend'den iste (BOM bazli planlama)
-      if (shouldRun && !jobSim.getActiveJob(machineId)) {
+      if (shouldRun && machine.getState() !== 'maintenance' && !jobSim.getActiveJob(machineId)) {
         await jobSim.ensureJobForMachine(machineId);
       }
 
       // Periyodik senkronizasyon (backend'den is emri durumlarini guncelle)
-      await jobSim.syncJobOrders(clock.getTickCount());
+      await jobSim.syncJobOrders(totalSimElapsedSec);
 
       // Makine tick
       const result = await machine.tick(simTime, deltaSec);
@@ -245,8 +272,13 @@ async function main() {
     const energySnap = energySim.tick(machines, simTime, deltaSec);
     if (energySnap) {
       const kwh = energySim.getTotalKwhToday();
-      console.log(`  ⚡ Enerji snapshot: ${energySnap.totalElectricityKw.toFixed(0)} kW anlik, ${kwh.toFixed(1)} kWh toplam`);
+      console.log(`  ⚡ Enerji: ${energySnap.totalElectricityKw.toFixed(0)} kW | ${kwh.toFixed(1)} kWh | Bakim: ${maintenanceSim.getTotalMaintenanceCount()} | SPC: ${spcSim.getTotalMeasurements()} olcum`);
     }
+
+    // C2. SPC olcum uretimi (saatlik)
+    const machineStates = new Map<string, string>();
+    for (const m of machines) machineStates.set(m.getMachineId(), m.getState());
+    await spcSim.tick(totalSimElapsedSec, machineStates);
 
     // D. Periyodik log (her 30 saniyede)
     lastLogTime += deltaSec;

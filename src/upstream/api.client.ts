@@ -142,4 +142,86 @@ export class ApiClient {
       return [];
     }
   }
+
+  // ─── Bakim Profili ────────────────────────────────────────────
+
+  /**
+   * Tum bakim profillerini getir
+   */
+  async getMaintenanceProfiles(): Promise<Array<{
+    machineId: string;
+    lubricationIntervalHrs: number;
+    hydraulicCheckHrs?: number;
+    calibrationIntervalHrs?: number;
+    beltChangeHrs?: number;
+    cumulativeRunHours: number;
+    maintenanceStatus: string;
+  }>> {
+    try {
+      const res = await this.api.get('/machines/maintenance-profiles/all');
+      return res.data || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Calisma saatini guncelle
+   */
+  async updateRunHours(machineId: string, hours: number): Promise<void> {
+    try {
+      await this.api.patch(`/machines/${machineId}/run-hours`, { additionalHours: hours });
+    } catch {}
+  }
+
+  /**
+   * Bakim tamamlandi bildir
+   */
+  async reportMaintenanceCompleted(machineId: string): Promise<void> {
+    try {
+      await this.api.patch(`/machines/${machineId}/maintenance-completed`);
+    } catch {}
+  }
+
+  // ─── SPC ──────────────────────────────────────────────────────
+
+  /**
+   * SPC karakteristiklerini getir (makine bazli)
+   */
+  async getSpcCharacteristics(machineId?: string): Promise<Array<{
+    id: string;
+    code: string;
+    name: string;
+    machineId?: string;
+    nominalValue: number;
+    upperSpecLimit: number;
+    lowerSpecLimit: number;
+    unit: string;
+    subgroupSize: number;
+    subgroupFrequency: string;
+  }>> {
+    try {
+      const params = machineId ? { machineId } : {};
+      const res = await this.api.get('/spc/characteristics', { params });
+      return res.data || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * SPC olcum kaydi gonder (toplu)
+   */
+  async sendSpcMeasurements(measurements: Array<{
+    characteristicId: string;
+    subgroupNo: number;
+    sampleNo: number;
+    measuredValue: number;
+    machineId?: string;
+    jobOrderId?: string;
+  }>): Promise<void> {
+    try {
+      await this.api.post('/spc/measurements/batch', { measurements });
+    } catch {}
+  }
 }
