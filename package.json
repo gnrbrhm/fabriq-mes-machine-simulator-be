@@ -1,0 +1,30 @@
+{
+  "name": "fabriq-mes-machine-simulator-be",
+  "version": "1.0.0",
+  "description": "Fabriq MES - Fabrika Makine Simulatoru",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "simulate": "tsx src/main.ts",
+    "seed-only": "tsx src/main.ts --seed-only",
+    "build": "tsup src/main.ts --format cjs --dts",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "github-personal:gnrbrhm/fabriq-mes-machine-simulator-be.git"
+  },
+  "author": "Halil Ibrahim Guneri",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.14.0",
+    "ioredis": "^5.10.1",
+    "kafkajs": "^2.2.4",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "tsup": "^8.5.1"
+  }
+}
