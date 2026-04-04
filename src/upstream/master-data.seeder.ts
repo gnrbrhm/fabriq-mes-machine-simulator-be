@@ -42,6 +42,8 @@ export class MasterDataSeeder {
     await this.seedProductMaterials();
     await this.seedBoms();
     await this.seedLots();
+    await this.seedMaintenanceProfiles();
+    await this.seedSpcCharacteristics();
 
     console.log('\n✅ Master Data Seed tamamlandi!\n');
   }
@@ -330,5 +332,55 @@ export class MasterDataSeeder {
       }
     }
     console.log(`  📋 Lotlar: ${created} yeni`);
+  }
+
+  /**
+   * 5. Makine bakim profilleri
+   */
+  private async seedMaintenanceProfiles() {
+    const profiles = [
+      { machineId: 'CNC-01', lubricationIntervalHrs: 168, hydraulicCheckHrs: null, calibrationIntervalHrs: 4320, beltChangeHrs: 2000 },
+      { machineId: 'CNC-02', lubricationIntervalHrs: 168, hydraulicCheckHrs: null, calibrationIntervalHrs: 4320, beltChangeHrs: 2000 },
+      { machineId: 'CNC-03', lubricationIntervalHrs: 168, hydraulicCheckHrs: null, calibrationIntervalHrs: 4320, beltChangeHrs: 2000 },
+      { machineId: 'PRESS-01', lubricationIntervalHrs: 168, hydraulicCheckHrs: 720, calibrationIntervalHrs: 2160, beltChangeHrs: null },
+      { machineId: 'PRESS-02', lubricationIntervalHrs: 168, hydraulicCheckHrs: 720, calibrationIntervalHrs: 2160, beltChangeHrs: null },
+      { machineId: 'WELD-01', lubricationIntervalHrs: 336, hydraulicCheckHrs: null, calibrationIntervalHrs: 2160, beltChangeHrs: null },
+      { machineId: 'WELD-02', lubricationIntervalHrs: 336, hydraulicCheckHrs: null, calibrationIntervalHrs: 2160, beltChangeHrs: null },
+      { machineId: 'PAINT-01', lubricationIntervalHrs: 720, hydraulicCheckHrs: null, calibrationIntervalHrs: 4320, beltChangeHrs: null },
+      { machineId: 'SAW-01', lubricationIntervalHrs: 168, hydraulicCheckHrs: null, calibrationIntervalHrs: 2160, beltChangeHrs: 50 },
+      { machineId: 'DRILL-01', lubricationIntervalHrs: 168, hydraulicCheckHrs: null, calibrationIntervalHrs: 4320, beltChangeHrs: null },
+    ];
+
+    let created = 0;
+    for (const p of profiles) {
+      try {
+        await this.api.put(`/machines/${p.machineId}/maintenance-profile`, p);
+        created++;
+      } catch { /* zaten var */ }
+    }
+    console.log(`  🔧 Bakim profilleri: ${created} yeni`);
+  }
+
+  /**
+   * 6. SPC karakteristikleri
+   */
+  private async seedSpcCharacteristics() {
+    const chars = [
+      { code: 'SPC-CNC01-CAP', name: 'Dis Cap O20', machineId: 'CNC-01', partNumber: 'PRD-001', nominalValue: 20.00, upperSpecLimit: 20.05, lowerSpecLimit: 19.95, unit: 'mm', measurementTool: 'mikrometre', specialCharClass: 'SC' },
+      { code: 'SPC-CNC01-UZN', name: 'Uzunluk 150mm', machineId: 'CNC-01', partNumber: 'PRD-001', nominalValue: 150.00, upperSpecLimit: 150.10, lowerSpecLimit: 149.90, unit: 'mm', measurementTool: 'kumpas' },
+      { code: 'SPC-CNC02-GEN', name: 'Kanal Genisligi', machineId: 'CNC-02', partNumber: 'PRD-002', nominalValue: 40.00, upperSpecLimit: 40.08, lowerSpecLimit: 39.92, unit: 'mm', measurementTool: 'kumpas', specialCharClass: 'HI' },
+      { code: 'SPC-CNC03-CAP', name: 'Burc Dis Cap', machineId: 'CNC-03', partNumber: 'PRD-005', nominalValue: 25.00, upperSpecLimit: 25.03, lowerSpecLimit: 24.97, unit: 'mm', measurementTool: 'mikrometre', specialCharClass: 'CC' },
+      { code: 'SPC-PRESS01-KAL', name: 'Sac Kalinlik', machineId: 'PRESS-01', partNumber: 'PRD-003', nominalValue: 3.00, upperSpecLimit: 3.10, lowerSpecLimit: 2.90, unit: 'mm', measurementTool: 'kumpas' },
+      { code: 'SPC-WELD01-DIK', name: 'Kaynak Dikis Genisligi', machineId: 'WELD-01', partNumber: 'PRD-004', nominalValue: 6.00, upperSpecLimit: 7.00, lowerSpecLimit: 5.00, unit: 'mm', measurementTool: 'kumpas', specialCharClass: 'SC' },
+    ];
+
+    let created = 0;
+    for (const c of chars) {
+      try {
+        await this.api.post('/spc/characteristics', { ...c, targetCpk: 1.33, subgroupSize: 5, subgroupFrequency: 'hourly', chartType: 'xbar_r' });
+        created++;
+      } catch { /* zaten var */ }
+    }
+    console.log(`  📊 SPC karakteristikler: ${created} yeni`);
   }
 }
