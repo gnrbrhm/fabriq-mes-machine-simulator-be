@@ -37,6 +37,7 @@ const KAFKA_BROKERS = (process.env.KAFKA_BROKERS || 'localhost:9094').split(',')
 // CLI argumanlari
 const args = process.argv.slice(2);
 const seedOnly = args.includes('--seed-only');
+const resetMode = args.includes('--reset');
 const speedIdx = args.indexOf('--speed');
 const simSpeed = speedIdx >= 0 ? parseFloat(args[speedIdx + 1] || '1') : parseFloat(process.env.SIMULATION_SPEED || '1');
 const startIdx = args.indexOf('--start');
@@ -57,6 +58,33 @@ async function main() {
   console.log(`║  Vardiya: 3 vardiya (Sabah/Ogle/Gece)                         ║`);
   console.log('╚═══════════════════════════════���═══════════════════════════════╝');
   console.log('');
+
+  // 0. Reset (--reset flag'i varsa)
+  if (resetMode) {
+    console.log('🔄 SISTEM RESET yapiliyor...\n');
+    try {
+      const axios = require('axios');
+      // Login
+      const loginRes = await axios.post(`${API_BASE_URL}/auth/login`, { email: 'admin@fabriq.io', password: 'admin123' });
+      const token = loginRes.data.token;
+      // Reset
+      const resetRes = await axios.post(`${API_BASE_URL}/system/reset`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      if (resetRes.data.success) {
+        console.log('✅ Sistem sifirlandi!\n');
+        const d = resetRes.data.details;
+        console.log(`   Is Emirleri: ${d.jobOrders || 0} silindi`);
+        console.log(`   Stok Hareket: ${d.stockMovements || 0} silindi`);
+        console.log(`   SPC Olcum: ${d.spcMeasurements || 0} silindi`);
+        console.log(`   Kalite: ${d.qualityInspections || 0} denetim silindi`);
+        console.log(`   Lotlar: baslangica donduruldu`);
+        console.log(`   Bakim: calisma saatleri sifirlandi`);
+        console.log(`   Redis: temizlendi`);
+        console.log('');
+      }
+    } catch (err: any) {
+      console.error(`⚠️  Reset hatasi: ${err.message} - devam ediliyor...`);
+    }
+  }
 
   // 1. Seed
   const seeder = new ApiSeeder(API_BASE_URL);

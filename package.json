@@ -7,6 +7,8 @@
     "start": "tsx src/main.ts",
     "simulate": "tsx src/main.ts",
     "seed-only": "tsx src/main.ts --seed-only",
+    "reset": "tsx src/main.ts --reset --seed-only",
+    "reset:start": "tsx src/main.ts --reset --start 06:00 --speed 15",
     "build": "tsup src/main.ts --format cjs --dts",
     "typecheck": "tsc --noEmit"
   },
