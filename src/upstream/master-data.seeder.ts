@@ -44,6 +44,7 @@ export class MasterDataSeeder {
     await this.seedLots();
     await this.seedMaintenanceProfiles();
     await this.seedSpcCharacteristics();
+    await this.seedReportDefinitions();
 
     console.log('\n✅ Master Data Seed tamamlandi!\n');
   }
@@ -382,5 +383,30 @@ export class MasterDataSeeder {
       } catch { /* zaten var */ }
     }
     console.log(`  📊 SPC karakteristikler: ${created} yeni`);
+  }
+
+  /**
+   * 7. Rapor tanimlari
+   */
+  private async seedReportDefinitions() {
+    const reports = [
+      { code: 'daily-production', name: 'Gunluk Uretim Raporu', category: 'production', templateType: 'excel', description: 'Gun bazli uretim, hurda ve is emri ozeti' },
+      { code: 'shift-performance', name: 'Vardiya Performans', category: 'production', templateType: 'excel', description: 'Vardiya bazli uretim ve verimlilik karsilastirmasi' },
+      { code: 'oee-dashboard', name: 'OEE Dashboard', category: 'oee', templateType: 'excel', description: 'Makine bazli OEE (A/P/Q) detayli rapor' },
+      { code: 'scrap-downtime-pareto', name: 'Hurda/Durus Pareto', category: 'quality', templateType: 'excel', description: 'Kategori bazli durus ve hurda analizi' },
+      { code: 'energy-consumption', name: 'Enerji Tuketim', category: 'energy', templateType: 'excel', description: 'Elektrik, dogalgaz, su tuketim ve CO2e raporu' },
+      { code: 'maintenance-cost', name: 'Bakim Maliyet', category: 'cost', templateType: 'excel', description: 'Ekipman bazli bakim maliyeti ve yedek parca kullanimi' },
+      { code: 'material-consumption', name: 'Malzeme Tuketim', category: 'production', templateType: 'excel', description: 'BOM bazli malzeme tuketim sapma analizi' },
+      { code: 'spc-capability', name: 'SPC Proses Yeterlilik', category: 'quality', templateType: 'pdf', description: 'Cp/Cpk hesaplamalari ve kontrol grafikleri' },
+    ];
+
+    let created = 0;
+    for (const r of reports) {
+      try {
+        await this.api.post('/reports/definitions', { ...r, createdBy: 'system', isActive: true });
+        created++;
+      } catch { /* zaten var */ }
+    }
+    console.log(`  📄 Rapor tanimlari: ${created} yeni`);
   }
 }
