@@ -63,9 +63,8 @@ export class JobOrderSimulator {
         // Bu makineye zaten is emri atanmis mi?
         const existing = this.activeJobs.get(machineId);
         if (existing && existing.jobOrderNo === bj.jobOrderNo) {
-          // Guncelle (backend'den gelen deger her zaman dogru)
-          existing.quantityProduced = bj.quantityProduced;
-          existing.quantityScrapped = bj.quantityScrapped;
+          // Simulator kendi sayacini tutar, backend'den override ETME
+          // Backend Kafka uzerinden guncellenecek (Cozum A)
           continue;
         }
 
@@ -77,15 +76,15 @@ export class JobOrderSimulator {
           continue;
         }
 
-        // Yeni is emri ata
+        // Yeni is emri ata (simulator 0'dan baslar, backend Kafka ile guncellenecek)
         this.activeJobs.set(machineId, {
           jobOrderNo: bj.jobOrderNo,
           materialCode: bj.materialCode,
           materialName: bj.materialName,
           machineId,
           quantityPlanned: bj.quantityPlanned,
-          quantityProduced: bj.quantityProduced,
-          quantityScrapped: bj.quantityScrapped,
+          quantityProduced: 0,
+          quantityScrapped: 0,
           bomId: bj.bomId,
         });
       }
