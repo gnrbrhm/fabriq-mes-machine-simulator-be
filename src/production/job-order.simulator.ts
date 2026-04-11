@@ -180,8 +180,7 @@ export class JobOrderSimulator {
     // onu bu makinede de devam ettir (paralel faz)
     for (const { bom, phase } of candidates) {
       if (phase.phaseNo > 1) {
-        // Ara/son faz: Bu BOM icin zaten devam eden bir is emri var mi?
-        // Not: bom.id (UUID) ile bom.bomId (kod) ikisini de kontrol et
+        // Yontem 1: activeJobs'ta bu BOM icin baska fazda calisan bir is emri var mi?
         const existingJob = this.findActiveJobForBom(bom.id) || this.findActiveJobForBom(bom.bomId);
         if (existingJob) {
           const job: ActiveJob = {
@@ -197,6 +196,26 @@ export class JobOrderSimulator {
           };
           this.activeJobs.set(machineId, job);
           console.log(`  [Paralel Faz] ${machineId} → ${job.jobOrderNo} FAZ-${phase.phaseNo} (${phase.operationName})`);
+          return job;
+        }
+
+        // Yontem 2: activeJobs'ta yok ama progress'te WIP bekleyen is emri var mi?
+        // (Onceki faz tamamlandi, buffer'da WIP var, bu faz icin is bekliyor)
+        const progressingJob = this.findProgressingJobForPhase(bom.id, phase.phaseNo);
+        if (progressingJob) {
+          const job: ActiveJob = {
+            jobOrderNo: progressingJob.jobOrderNo,
+            materialCode: progressingJob.materialCode,
+            materialName: progressingJob.materialName,
+            machineId,
+            phaseNo: phase.phaseNo,
+            quantityPlanned: progressingJob.quantityPlanned,
+            quantityProduced: 0,
+            quantityScrapped: 0,
+            bomId: progressingJob.bomId,
+          };
+          this.activeJobs.set(machineId, job);
+          console.log(`  [WIP Buffer] ${machineId} → ${job.jobOrderNo} FAZ-${phase.phaseNo} (${phase.operationName})`);
           return job;
         }
       }
@@ -266,6 +285,86 @@ export class JobOrderSimulator {
       if (job.bomId === bomId) return job;
     }
     return undefined;
+  }
+
+  /**
+   * Ara faz icin uygun WIP bekleyen is emrini bul.
+   *
+   * Bir makine belirli bir BOM'un FAZ-N'i icin bos kaldiginda cagirilir.
+   * Bu BOM icin progress'te su kosullari saglayan bir is emri aranir:
+   * - (N-1). faz bu is emri icin parca uretmis (prevCount > 0)
+   * - N. faz bu is emri icin henuz bitmemis (currentCount < prevCount veya 0)
+   * - N. faz hedefine ulasmamis (currentCount < quantityPlanned)
+   *
+   * Oncelik: En fazla WIP biriktirmis is emri (buffer bosaltma)
+   */
+  private findProgressingJobForPhase(bomId: string, phaseNo: number): {
+    jobOrderNo: string;
+    materialCode: string;
+    materialName: string;
+    quantityPlanned: number;
+    bomId: string;
+  } | null {
+    if (phaseNo < 2) return null; // Ara faz olmayi gerektirir
+
+    // Bu BOM'un job progress kayitlarina bak
+    const candidates: Array<{ jobOrderNo: string; wipDiff: number; quantityPlanned: number; progress: JobPhaseProgress }> = [];
+
+    for (const [jobOrderNo, progress] of this.jobPhaseProgress.entries()) {
+      // Progress'teki is emrinin bu BOM'a ait olup olmadigini bilmiyoruz.
+      // Bu metoda sadece activeJobs'dan gelen bilgiyle karar veremeyiz.
+      // Bunun yerine activeJobs'a bakmak daha temiz - progress sadece sayac.
+      // Ama bu metot activeJobs disinda da "devam eden" is emrini bulmamiza yarar.
+
+      // Onceki faz ne kadar uretmis?
+      const prevCount = progress.phaseCounts.get(phaseNo - 1) || 0;
+      const currentCount = progress.phaseCounts.get(phaseNo) || 0;
+
+      // Onceki faz uretim yapmamis → bu is emri icin ara faza geciş yok
+      if (prevCount === 0) continue;
+      // Ara faz kendi hedefine ulasmis → yeni parca uretemez
+      if (currentCount >= progress.quantityPlanned) continue;
+      // Onceki fazdan kumulatif olarak gecilmis, demek ki WIP buffer var
+      if (currentCount >= prevCount) continue; // buffer bos
+
+      candidates.push({
+        jobOrderNo,
+        wipDiff: prevCount - currentCount,
+        quantityPlanned: progress.quantityPlanned,
+        progress,
+      });
+    }
+
+    if (candidates.length === 0) return null;
+
+    // En fazla WIP biriktirmis is emrini sec (buffer bosaltma onceligi)
+    candidates.sort((a, b) => b.wipDiff - a.wipDiff);
+    const best = candidates[0];
+
+    // Is emri bilgilerini ilk olarak activeJobs'tan al (hala bagli olabilir)
+    for (const job of this.activeJobs.values()) {
+      if (job.jobOrderNo === best.jobOrderNo && job.bomId === bomId) {
+        return {
+          jobOrderNo: job.jobOrderNo,
+          materialCode: job.materialCode,
+          materialName: job.materialName,
+          quantityPlanned: job.quantityPlanned,
+          bomId: job.bomId!,
+        };
+      }
+    }
+
+    // activeJobs'dan cikmis olabilir - bom flow'daki output bilgisini kullan
+    const flow = this.bomFlows.get(bomId);
+    if (!flow) return null;
+
+    return {
+      jobOrderNo: best.jobOrderNo,
+      materialCode: flow.outputProduct.materialCode,
+      materialName: flow.outputProduct.materialName,
+      quantityPlanned: best.quantityPlanned,
+      bomId,
+    };
   }
 
   /**
