@@ -17,11 +17,23 @@ export interface ActiveJob {
   materialCode: string;
   materialName: string;
   machineId: string;
-  phaseNo: number;           // YENI: Bu makine bu is emri icin hangi fazda
+  phaseNo: number;           // Bu makine bu is emri icin hangi fazda
   quantityPlanned: number;
-  quantityProduced: number;   // Bu fazda bu makinede uretilen
+  quantityProduced: number;   // Bu fazda bu makinede uretilen (yerel sayac)
   quantityScrapped: number;
   bomId?: string;
+}
+
+/**
+ * Bir is emrinin faz bazli ilerleme durumu.
+ * jobOrderNo + phaseNo → kac parca o fazda tamamlandi
+ * Paralel faz mantigi: FAZ-2 FAZ-1'in kumulatif sayacindan fazla uretemez (buffer kontrolu)
+ */
+interface JobPhaseProgress {
+  jobOrderNo: string;
+  phaseCounts: Map<number, number>; // phaseNo → kumulatif uretim
+  quantityPlanned: number;
+  lastPhaseNo: number; // son faz numarasi
 }
 
 export class JobOrderSimulator {
@@ -32,6 +44,9 @@ export class JobOrderSimulator {
   private apiClient: ApiClient;
   private boms: BackendBom[] = [];
   private bomFlows = new Map<string, BomFlowData>(); // bomId → flow data (fazlar ile)
+  // Is emri faz bazli ilerleme takibi (paralel faz WIP buffer kontrolu icin)
+  // key: jobOrderNo → JobPhaseProgress
+  private jobPhaseProgress = new Map<string, JobPhaseProgress>();
   private lastSyncTime = 0;
 
   constructor(apiClient: ApiClient) {
@@ -254,22 +269,94 @@ export class JobOrderSimulator {
   }
 
   /**
+   * Bu makine su an parca uretebilir mi?
+   *
+   * Faz bazli kontrol:
+   * - Faz bu makineye ait mi?
+   * - Faz sayaci hedefe ulasti mi? (planlanan tamamlandi mi?)
+   * - Ara faz ise: onceki faz yeterli WIP uretmis mi? (buffer kontrolu)
+   */
+  canProduceOnMachine(machineId: string): boolean {
+    const job = this.activeJobs.get(machineId);
+    if (!job) return false;
+
+    const progress = this.jobPhaseProgress.get(job.jobOrderNo);
+    if (!progress) return true; // ilk parca - henuz progress yok, uretebilir
+
+    const currentPhaseCount = progress.phaseCounts.get(job.phaseNo) || 0;
+
+    // 1) Bu faz planlanan hedefe ulasti mi?
+    if (currentPhaseCount >= progress.quantityPlanned) {
+      return false; // bu faz icin yeterince uretildi, dur
+    }
+
+    // 2) Ara/son faz ise: onceki fazin kumulatif sayacindan fazla uretemeyiz
+    //    (WIP buffer kontrolu - paralel fazlarda kuyruk bekleme senaryosu)
+    if (job.phaseNo > 1) {
+      const prevPhaseCount = progress.phaseCounts.get(job.phaseNo - 1) || 0;
+      if (currentPhaseCount >= prevPhaseCount) {
+        // Onceki faz hala yetismedi, WIP yok - beklemeli
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
    * Parca uretildi (simulator tarafinda sayac artir)
    * Backend malzeme tuketimini kendi yapacak
+   *
+   * Faz ilerleme map'ini gunceller, paralel faz kontrolunu saglar.
+   * Dondurdugu deger: gercekten parca uretildi mi (true/false)
    */
-  partProduced(machineId: string) {
+  partProduced(machineId: string): boolean {
     const job = this.activeJobs.get(machineId);
-    if (!job) return;
+    if (!job) return false;
 
+    // Onceki kontrolu burada da yap: bu makine uretebilir mi?
+    if (!this.canProduceOnMachine(machineId)) {
+      return false;
+    }
+
+    // Progress map'i al veya olustur
+    let progress = this.jobPhaseProgress.get(job.jobOrderNo);
+    if (!progress) {
+      const bomFlow = job.bomId ? this.bomFlows.get(job.bomId) : null;
+      const lastPhaseNo = bomFlow ? bomFlow.phases.length : 1;
+      progress = {
+        jobOrderNo: job.jobOrderNo,
+        phaseCounts: new Map<number, number>(),
+        quantityPlanned: job.quantityPlanned,
+        lastPhaseNo,
+      };
+      this.jobPhaseProgress.set(job.jobOrderNo, progress);
+    }
+
+    // Bu fazin sayacini artir
+    const newCount = (progress.phaseCounts.get(job.phaseNo) || 0) + 1;
+    progress.phaseCounts.set(job.phaseNo, newCount);
+
+    // Yerel sayac (geriye donuk uyumluluk)
     job.quantityProduced++;
     this.totalProduced++;
 
-    // Is emri tamamlandi mi?
-    if (job.quantityProduced >= job.quantityPlanned) {
+    // Bu faz tamamlandi mi? (bu makine icin yeni is beklemesi gerekiyor mu?)
+    if (newCount >= progress.quantityPlanned) {
+      // Faz tamamlandi - bu makineyi serbest birak
       this.activeJobs.delete(machineId);
-      this.completedCount++;
-      console.log(`  [Is Emri] ${job.jobOrderNo} TAMAMLANDI (${job.quantityProduced}/${job.quantityPlanned})`);
+
+      // Is emri tamamen tamamlandi mi? (son faz ise)
+      if (job.phaseNo === progress.lastPhaseNo) {
+        this.completedCount++;
+        this.jobPhaseProgress.delete(job.jobOrderNo);
+        console.log(`  [Is Emri] ${job.jobOrderNo} TAMAMLANDI (son faz ${job.phaseNo}, ${newCount}/${progress.quantityPlanned})`);
+      } else {
+        console.log(`  [Faz Tamam] ${job.jobOrderNo} FAZ-${job.phaseNo} bitti (${machineId}) → sonraki faz devam edecek`);
+      }
     }
+
+    return true;
   }
 
   /**

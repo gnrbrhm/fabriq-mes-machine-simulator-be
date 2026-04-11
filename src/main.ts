@@ -187,8 +187,16 @@ async function main() {
     const job = jobSim.getActiveJob(data.machineId);
     if (!job) return;
 
-    // Simulator tarafinda sayac artir
-    jobSim.partProduced(data.machineId);
+    // Faz bazli kontrol: bu makine su an parca uretebilir mi?
+    // - Bu fazin hedefi tamamlandi mi?
+    // - Ara faz ise onceki fazdan yeterince WIP var mi?
+    if (!jobSim.canProduceOnMachine(data.machineId)) {
+      return; // Kafka'ya mesaj gonderme, simulator bosta beklesin
+    }
+
+    // Simulator tarafinda sayac artir (faz bazli)
+    const produced = jobSim.partProduced(data.machineId);
+    if (!produced) return;
 
     // Kafka'ya bildir → Backend ExecutionService WIP lot yonetimi yapacak
     // phaseNo gonderiyoruz: Backend hangi fazin uretildigini bilsin
@@ -204,7 +212,7 @@ async function main() {
         job.materialName,
         data.machineId,
         undefined, // customer
-        job.phaseNo, // YENI: faz numarasi
+        job.phaseNo, // faz numarasi
       );
       // NOT: Malzeme tuketimi artik gonderilmiyor - backend BOM'dan kendisi dusecek
       // WIP lot olusturma da backend tarafinda yapilacak (faz bazli)
