@@ -156,6 +156,7 @@ export class KafkaPublisher {
     materialName?: string,
     operation?: string,
     customer?: string,
+    phaseNo?: number,
   ) {
     if (!this.connected) return;
 
@@ -166,6 +167,7 @@ export class KafkaPublisher {
       currentStatus: status,
       changedBy: 'simulator',
       machineId,
+      phaseNo: phaseNo || 1,
       quantityProduced,
       quantityPlanned,
       quantityScrapped,

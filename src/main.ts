@@ -190,7 +190,8 @@ async function main() {
     // Simulator tarafinda sayac artir
     jobSim.partProduced(data.machineId);
 
-    // Kafka'ya bildir → Backend ExecutionService malzeme dusecek
+    // Kafka'ya bildir → Backend ExecutionService WIP lot yonetimi yapacak
+    // phaseNo gonderiyoruz: Backend hangi fazin uretildigini bilsin
     try {
       await kafka.publishJobOrderStatus(
         job.jobOrderNo,
@@ -202,8 +203,11 @@ async function main() {
         job.materialCode,
         job.materialName,
         data.machineId,
+        undefined, // customer
+        job.phaseNo, // YENI: faz numarasi
       );
       // NOT: Malzeme tuketimi artik gonderilmiyor - backend BOM'dan kendisi dusecek
+      // WIP lot olusturma da backend tarafinda yapilacak (faz bazli)
     } catch { /* sessiz */ }
   });
 

@@ -23,6 +23,21 @@ export interface BackendJobOrder {
   customer?: string;
 }
 
+export interface BomFlowPhase {
+  phaseNo: number;
+  machineId: string;
+  operationName: string;
+  cycleTimeSec: number;
+  isLastPhase: boolean;
+  expectedScrapRate: number;
+}
+
+export interface BomFlowData {
+  bom: { id: string; bomId: string; code: string };
+  phases: BomFlowPhase[];
+  outputProduct: { materialCode: string; materialName: string };
+}
+
 export interface BackendBom {
   id: string;
   bomId: string;
@@ -105,6 +120,18 @@ export class ApiClient {
       return res.data?.data || [];
     } catch {
       return [];
+    }
+  }
+
+  /**
+   * BOM faz akisini getir (her fazin makinesi ve sirasini ogrenmek icin)
+   */
+  async getBomFlow(bomId: string): Promise<BomFlowData | null> {
+    try {
+      const res = await this.api.get(`/boms/${bomId}/flow`);
+      return res.data;
+    } catch {
+      return null;
     }
   }
 
