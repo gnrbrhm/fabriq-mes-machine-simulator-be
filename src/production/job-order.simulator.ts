@@ -1,52 +1,54 @@
 /**
- * Is Emri Simulatoru (Backend-Driven)
+ * Is Emri Simulatoru (Child-Aware, Backend-Driven)
  *
- * Artik kendi is emri OLUSTURMUYOR.
- * Backend'den aktif is emirlerini okur ve makinelere atar.
- * Parca uretildikce sadece Kafka'ya counter event gonderir.
- * Malzeme tuketimi backend ProductionExecutionService tarafindan yapilir.
+ * Backend'de her iş emri parent + N child (faz başı bir) şeklinde oluşturulur.
+ * Simülatör yalnızca CHILD iş emirlerini işler — her child bir makineye aittir,
+ * kendi quantityProduced sayacına sahiptir. Backend parent rollup'ı otomatik yapar.
  *
- * Is emri yoksa → backend'e BOM bazli is emri olusturma talebi gonderir.
+ * Mantik:
+ * - syncJobOrders: backend'den started child'lari ceker, activeJobs map'ine atar
+ * - canProduceOnMachine: child kendi hedefine ulasti mi + WIP buffer kontrolu
+ * - partProduced: child sayacini artirir, Kafka'ya her parcada event gonderir
+ * - Is emri yoksa → backend'e BOM bazli yeni parent+child olusturma talebi
  */
 
 import { ApiClient, type BackendBom, type BomFlowData, type BomFlowPhase } from '../upstream/api.client';
 import { gaussian } from '../core/random.utils';
 
 export interface ActiveJob {
-  jobOrderNo: string;
+  jobOrderNo: string;        // Child jobOrderNo (ornek: JO-2026-0021.2)
+  parentJobOrderNo: string;  // Parent jobOrderNo (ornek: JO-2026-0021)
   materialCode: string;
   materialName: string;
   machineId: string;
-  phaseNo: number;           // Bu makine bu is emri icin hangi fazda
+  phaseNo: number;
   quantityPlanned: number;
-  quantityProduced: number;   // Bu fazda bu makinede uretilen (yerel sayac)
+  quantityProduced: number;  // Backend'den senkron; simulator yerelde artirarak takip eder
   quantityScrapped: number;
   bomId?: string;
+  assignedAt?: number;       // Bu kayit olusturuldugu timestamp (sync grace period icin)
 }
 
 /**
- * Bir is emrinin faz bazli ilerleme durumu.
- * jobOrderNo + phaseNo → kac parca o fazda tamamlandi
- * Paralel faz mantigi: FAZ-2 FAZ-1'in kumulatif sayacindan fazla uretemez (buffer kontrolu)
+ * Parent iş emri başına fazların kümülatif üretim durumu.
+ * Son üretim yapan child güncelleme sonrası bu map yeniden hesaplanır.
+ * WIP buffer kontrolü için ara/son fazların önceki fazdan fazla üretmemesini sağlar.
  */
-interface JobPhaseProgress {
-  jobOrderNo: string;
-  phaseCounts: Map<number, number>; // phaseNo → kumulatif uretim
+interface ParentProgress {
+  parentJobOrderNo: string;
   quantityPlanned: number;
-  lastPhaseNo: number; // son faz numarasi
+  phaseCounts: Map<number, number>; // phaseNo → kumulatif uretim (backend'den)
 }
 
 export class JobOrderSimulator {
-  private activeJobs = new Map<string, ActiveJob>(); // machineId → job
+  private activeJobs = new Map<string, ActiveJob>(); // machineId → child job
+  private parentProgress = new Map<string, ParentProgress>(); // parentJobOrderNo → progress
   private completedCount = 0;
   private totalProduced = 0;
   private totalScrapped = 0;
   private apiClient: ApiClient;
   private boms: BackendBom[] = [];
-  private bomFlows = new Map<string, BomFlowData>(); // bomId → flow data (fazlar ile)
-  // Is emri faz bazli ilerleme takibi (paralel faz WIP buffer kontrolu icin)
-  // key: jobOrderNo → JobPhaseProgress
-  private jobPhaseProgress = new Map<string, JobPhaseProgress>();
+  private bomFlows = new Map<string, BomFlowData>();
   private lastSyncTime = 0;
 
   constructor(apiClient: ApiClient) {
@@ -60,7 +62,6 @@ export class JobOrderSimulator {
     this.boms = await this.apiClient.getBoms();
     console.log(`  📋 ${this.boms.length} BOM yuklendi`);
 
-    // Her BOM icin faz akisini cek (hangi makine hangi fazda)
     let totalPhases = 0;
     for (const bom of this.boms) {
       const flow = await this.apiClient.getBomFlow(bom.id);
@@ -73,65 +74,113 @@ export class JobOrderSimulator {
   }
 
   /**
-   * Bir makinenin bir BOM icin hangi faz oldugunu bul
-   */
-  private getPhaseForMachine(bomId: string, machineId: string): BomFlowPhase | null {
-    const flow = this.bomFlows.get(bomId);
-    if (!flow) return null;
-    return flow.phases.find((p) => p.machineId === machineId) || null;
-  }
-
-
-  /**
-   * Backend'den aktif is emirlerini senkronize et
-   * Her 30 saniyede bir cagirilir
+   * Backend'den aktif CHILD is emirlerini senkronize et (30 saniyede bir).
+   *
+   * Yeni yaklaşim: `active/by-machines` endpoint'i makine listesiyle cagirilir.
+   * Backend her makine icin en eski aktif child'i doner — sayfa sinirli degil.
+   *
+   * Yaptigi isler:
+   * 1. Her makine icin backend'den gelen child'i activeJobs'a yaz (yoksa)
+   * 2. Backend'den donmeyen makineler icin activeJobs'tan temizle
+   * 3. parentProgress haritasini guncelle (canProduceOnMachine icin)
+   *
+   * NOT: Yerel olarak az once olusturulan is emirleri icin grace period uygulanir.
+   * Simulator `createJobOrderFromBom` cagirdiktan sonra backend'de child'in gorunmesi
+   * bir anlik gecikebilir - bu durumda silinmemeli.
    */
   async syncJobOrders(simTimeSec: number) {
-    // 30 saniyede bir senkronize et
     if (simTimeSec - this.lastSyncTime < 30) return;
     this.lastSyncTime = simTimeSec;
 
     try {
-      const backendJobs = await this.apiClient.getActiveJobOrders();
-
-      for (const bj of backendJobs) {
-        // operation alani machineId olarak kullaniliyor (simulator böyle gonderiyor)
-        const machineId = bj.operation;
-
-        // Bu makineye zaten is emri atanmis mi?
-        const existing = this.activeJobs.get(machineId);
-        if (existing && existing.jobOrderNo === bj.jobOrderNo) {
-          // Simulator kendi sayacini tutar, backend'den override ETME
-          // Backend Kafka uzerinden guncellenecek (Cozum A)
-          continue;
+      // BomFlows'tan tum makineleri topla
+      const machineIds = new Set<string>();
+      for (const flow of this.bomFlows.values()) {
+        for (const p of flow.phases) {
+          if (p.machineId) machineIds.add(p.machineId);
         }
+      }
+      // Ayrica activeJobs'taki makineler de dahil
+      for (const machineId of this.activeJobs.keys()) {
+        machineIds.add(machineId);
+      }
 
-        // Tamamlanmis is emrini kaldir
-        if (bj.status === 'completed') {
-          if (this.activeJobs.has(machineId)) {
-            this.activeJobs.delete(machineId);
+      const { assignments, parentProgress: progressChildren } = await this.apiClient.getActiveChildrenByMachines(Array.from(machineIds));
+      const backendChildren = assignments; // makine atama icin
+      const byMachine = new Map<string, typeof backendChildren[0]>();
+      for (const c of backendChildren) {
+        if (c.operation) byMachine.set(c.operation, c);
+      }
+
+      const now = Date.now();
+      const GRACE_PERIOD_MS = 60_000; // 1 dakika: yerel olusturulan is emrine grace ver
+
+      // 1) Her makine icin guncelle veya temizle
+      for (const machineId of machineIds) {
+        const backendChild = byMachine.get(machineId);
+        const local = this.activeJobs.get(machineId);
+
+        if (backendChild) {
+          // Backend'de is var
+          if (!local || local.jobOrderNo !== backendChild.jobOrderNo) {
+            // Yeni ata veya degisiklige yaz
+            const parentNo = backendChild.jobOrderNo.includes('.')
+              ? backendChild.jobOrderNo.split('.').slice(0, -1).join('.')
+              : backendChild.jobOrderNo;
+            this.activeJobs.set(machineId, {
+              jobOrderNo: backendChild.jobOrderNo,
+              parentJobOrderNo: parentNo,
+              materialCode: backendChild.materialCode,
+              materialName: backendChild.materialName,
+              machineId,
+              phaseNo: backendChild.phaseNo || 1,
+              quantityPlanned: backendChild.quantityPlanned,
+              quantityProduced: backendChild.quantityProduced || 0,
+              quantityScrapped: 0,
+              bomId: backendChild.bomId,
+              assignedAt: now,
+            });
+          } else {
+            // Ayni is, sayacı taze veriyle guncelle
+            local.quantityProduced = backendChild.quantityProduced || 0;
           }
-          continue;
+        } else {
+          // Backend'de is yok
+          if (local) {
+            // Grace period: yerel olusturulan is emri backend'de henuz gorunmuyor olabilir
+            if (local.assignedAt && now - local.assignedAt < GRACE_PERIOD_MS) {
+              // Bekle, bir sonraki sync'te tekrar kontrol et
+              continue;
+            }
+            this.activeJobs.delete(machineId);
+            console.log(`  [Senkron] ${machineId} serbest (${local.jobOrderNo} artik started degil)`);
+          }
         }
+      }
 
-        // Bu is emri icin bu makinenin hangi fazi oldugunu bul
-        const phase = bj.bomId ? this.getPhaseForMachine(bj.bomId, machineId) : null;
-        // Backend'den gelen is emrinin `operation` alani genelde ilk faz makinesidir,
-        // ama BOM flow'dan gercek fazi cikaramazsak faz 1 varsayariz
-        const phaseNo = phase?.phaseNo ?? 1;
+      // 2) parentProgress haritasini guncelle
+      // KRITIK: assignments sadece her makine icin 1 child doner. WIP buffer kontrolu icin
+      // parent'in TUM child'larinin sayaclari gerekli (FAZ-1 ne kadar uretti, FAZ-2'nin
+      // gercek buffer durumu hesaplanabilsin). Bu yuzden progressChildren kullaniliyor.
+      this.parentProgress.clear();
+      const allChildrenForProgress = progressChildren.length > 0 ? progressChildren : backendChildren;
+      for (const child of allChildrenForProgress) {
+        if (!child.parentJobOrderId || child.phaseNo == null) continue;
 
-        // Yeni is emri ata (simulator 0'dan baslar, backend Kafka ile guncellenecek)
-        this.activeJobs.set(machineId, {
-          jobOrderNo: bj.jobOrderNo,
-          materialCode: bj.materialCode,
-          materialName: bj.materialName,
-          machineId,
-          phaseNo,
-          quantityPlanned: bj.quantityPlanned,
-          quantityProduced: 0,
-          quantityScrapped: 0,
-          bomId: bj.bomId,
-        });
+        const parentNo = child.jobOrderNo.includes('.')
+          ? child.jobOrderNo.split('.').slice(0, -1).join('.')
+          : child.jobOrderNo;
+
+        let progress = this.parentProgress.get(parentNo);
+        if (!progress) {
+          progress = {
+            parentJobOrderNo: parentNo,
+            quantityPlanned: child.quantityPlanned,
+            phaseCounts: new Map<number, number>(),
+          };
+          this.parentProgress.set(parentNo, progress);
+        }
+        progress.phaseCounts.set(child.phaseNo, child.quantityProduced || 0);
       }
     } catch {
       // Sync hatasi - sessiz devam et
@@ -159,76 +208,26 @@ export class JobOrderSimulator {
   }
 
   /**
-   * Makineye is emri gerekiyorsa belirle.
+   * Makineye iş gerekiyorsa bul/olustur.
    *
-   * Faz bazli mantik:
-   * - Eger bu makine bir BOM'un 1. fazi ise → backend'e yeni is emri talebi gonder
-   * - Eger bu makine bir BOM'un ara/son fazi ise → onceki fazdan gelen WIP'i beklemek icin
-   *   ayni is emrinin devamini uretmeli. Bu durumda backend'de aktif bir is emri ara,
-   *   yoksa kuyrukta bekle.
+   * 1. Backend'den gelen child'larin hangisi bu makineye ait?
+   *    → syncJobOrders zaten atamis olurdu, ama henuz sync olmamis olabilir.
+   * 2. Hiç uygun child yoksa ve bu makine bir BOM'un ilk faz makinesi ise,
+   *    backend'e yeni iş emri (parent+child zinciri) olusturma talebi gonder.
    */
   async ensureJobForMachine(machineId: string): Promise<ActiveJob | null> {
     if (this.activeJobs.has(machineId)) {
       return this.activeJobs.get(machineId)!;
     }
 
-    // Bu makine hangi BOM'larda hangi fazlari calisabilir? (tum adaylar)
-    const candidates = this.findAllBomsWithPhaseForMachine(machineId);
-    if (candidates.length === 0) return null;
-
-    // Once ara/son faz adaylarina bak - eger baska bir makinede devam eden is emri varsa
-    // onu bu makinede de devam ettir (paralel faz)
-    for (const { bom, phase } of candidates) {
-      if (phase.phaseNo > 1) {
-        // Yontem 1: activeJobs'ta bu BOM icin baska fazda calisan bir is emri var mi?
-        const existingJob = this.findActiveJobForBom(bom.id) || this.findActiveJobForBom(bom.bomId);
-        if (existingJob) {
-          const job: ActiveJob = {
-            jobOrderNo: existingJob.jobOrderNo,
-            materialCode: existingJob.materialCode,
-            materialName: existingJob.materialName,
-            machineId,
-            phaseNo: phase.phaseNo,
-            quantityPlanned: existingJob.quantityPlanned,
-            quantityProduced: 0,
-            quantityScrapped: 0,
-            bomId: existingJob.bomId,
-          };
-          this.activeJobs.set(machineId, job);
-          console.log(`  [Paralel Faz] ${machineId} → ${job.jobOrderNo} FAZ-${phase.phaseNo} (${phase.operationName})`);
-          return job;
-        }
-
-        // Yontem 2: activeJobs'ta yok ama progress'te WIP bekleyen is emri var mi?
-        // (Onceki faz tamamlandi, buffer'da WIP var, bu faz icin is bekliyor)
-        const progressingJob = this.findProgressingJobForPhase(bom.id, phase.phaseNo);
-        if (progressingJob) {
-          const job: ActiveJob = {
-            jobOrderNo: progressingJob.jobOrderNo,
-            materialCode: progressingJob.materialCode,
-            materialName: progressingJob.materialName,
-            machineId,
-            phaseNo: phase.phaseNo,
-            quantityPlanned: progressingJob.quantityPlanned,
-            quantityProduced: 0,
-            quantityScrapped: 0,
-            bomId: progressingJob.bomId,
-          };
-          this.activeJobs.set(machineId, job);
-          console.log(`  [WIP Buffer] ${machineId} → ${job.jobOrderNo} FAZ-${phase.phaseNo} (${phase.operationName})`);
-          return job;
-        }
-      }
-    }
-
-    // Hic aktif is emri yok - 1. faz olan bir BOM bul ve yeni is emri olustur
-    const firstPhaseCandidate = candidates.find((c) => c.phase.phaseNo === 1);
-    if (!firstPhaseCandidate) {
-      // Bu makine hic ilk faz degil, beklemeli (ara faz ama is yok)
+    // Bu makine bir BOM'un ilk faz makinesi mi? Eger oyleyse yeni parent+child olustur
+    const firstPhaseBom = this.findBomWhereMachineIsFirstPhase(machineId);
+    if (!firstPhaseBom) {
+      // Ara/son faz makinesi - syncJobOrders beklemeli (backend'de child olusunca otomatik atanir)
       return null;
     }
 
-    const { bom, phase } = firstPhaseCandidate;
+    const { bom } = firstPhaseBom;
     const quantity = Math.round(gaussian(50, 15));
     const customer = this.getCustomerForBom(bom);
 
@@ -240,161 +239,68 @@ export class JobOrderSimulator {
 
     if (!jobOrder) return null;
 
-    const job: ActiveJob = {
-      jobOrderNo: jobOrder.jobOrderNo,
+    // Backend parent ve child'lari olusturdu. FAZ-1 child'i bu makineye aittir.
+    // Sync'in getirmesini beklemek yerine kendi kaydimizi olusturalim.
+    const child: ActiveJob = {
+      jobOrderNo: `${jobOrder.jobOrderNo}.1`, // Konvansiyon: FAZ-1 child
+      parentJobOrderNo: jobOrder.jobOrderNo,
       materialCode: jobOrder.materialCode,
       materialName: jobOrder.materialName,
       machineId,
-      phaseNo: phase.phaseNo,
+      phaseNo: 1,
       quantityPlanned: jobOrder.quantityPlanned,
       quantityProduced: 0,
       quantityScrapped: 0,
       bomId: jobOrder.bomId,
+      assignedAt: Date.now(), // grace period icin
     };
 
-    this.activeJobs.set(machineId, job);
-    console.log(`  [Backend] Is emri atandi: ${machineId} → ${job.jobOrderNo} FAZ-${phase.phaseNo} (${job.materialName} x${job.quantityPlanned})`);
+    this.activeJobs.set(machineId, child);
+    console.log(`  [Backend] Yeni is emri: ${machineId} → ${child.jobOrderNo} (${child.materialName} x${child.quantityPlanned})`);
 
-    return job;
+    return child;
   }
 
   /**
-   * Bu makinenin calisabilecegi TUM BOM-faz kombinasyonlarini dondurur
+   * Bu makinenin bir BOM'un ilk fazi olup olmadigini kontrol et.
    */
-  private findAllBomsWithPhaseForMachine(machineId: string): Array<{ bom: BackendBom; phase: BomFlowPhase }> {
-    const results: Array<{ bom: BackendBom; phase: BomFlowPhase }> = [];
+  private findBomWhereMachineIsFirstPhase(machineId: string): { bom: BackendBom; phase: BomFlowPhase } | null {
     for (const bom of this.boms) {
       const flow = this.bomFlows.get(bom.id);
       if (!flow) continue;
-      // Bir BOM'da ayni makine birden fazla fazda olabilir (nadir) - hepsini ekle
-      for (const phase of flow.phases) {
-        if (phase.machineId === machineId) {
-          results.push({ bom, phase });
-        }
+      const firstPhase = flow.phases.find((p) => p.phaseNo === 1);
+      if (firstPhase && firstPhase.machineId === machineId) {
+        return { bom, phase: firstPhase };
       }
     }
-    return results;
-  }
-
-  /**
-   * Bir BOM icin herhangi bir makinede aktif is emri var mi?
-   * (Paralel faz icin: ayni is emrinin baska bir fazi calisiyor mu)
-   */
-  private findActiveJobForBom(bomId: string): ActiveJob | undefined {
-    for (const job of this.activeJobs.values()) {
-      if (job.bomId === bomId) return job;
-    }
-    return undefined;
-  }
-
-  /**
-   * Ara faz icin uygun WIP bekleyen is emrini bul.
-   *
-   * Bir makine belirli bir BOM'un FAZ-N'i icin bos kaldiginda cagirilir.
-   * Bu BOM icin progress'te su kosullari saglayan bir is emri aranir:
-   * - (N-1). faz bu is emri icin parca uretmis (prevCount > 0)
-   * - N. faz bu is emri icin henuz bitmemis (currentCount < prevCount veya 0)
-   * - N. faz hedefine ulasmamis (currentCount < quantityPlanned)
-   *
-   * Oncelik: En fazla WIP biriktirmis is emri (buffer bosaltma)
-   */
-  private findProgressingJobForPhase(bomId: string, phaseNo: number): {
-    jobOrderNo: string;
-    materialCode: string;
-    materialName: string;
-    quantityPlanned: number;
-    bomId: string;
-  } | null {
-    if (phaseNo < 2) return null; // Ara faz olmayi gerektirir
-
-    // Bu BOM'un job progress kayitlarina bak
-    const candidates: Array<{ jobOrderNo: string; wipDiff: number; quantityPlanned: number; progress: JobPhaseProgress }> = [];
-
-    for (const [jobOrderNo, progress] of this.jobPhaseProgress.entries()) {
-      // Progress'teki is emrinin bu BOM'a ait olup olmadigini bilmiyoruz.
-      // Bu metoda sadece activeJobs'dan gelen bilgiyle karar veremeyiz.
-      // Bunun yerine activeJobs'a bakmak daha temiz - progress sadece sayac.
-      // Ama bu metot activeJobs disinda da "devam eden" is emrini bulmamiza yarar.
-
-      // Onceki faz ne kadar uretmis?
-      const prevCount = progress.phaseCounts.get(phaseNo - 1) || 0;
-      const currentCount = progress.phaseCounts.get(phaseNo) || 0;
-
-      // Onceki faz uretim yapmamis → bu is emri icin ara faza geciş yok
-      if (prevCount === 0) continue;
-      // Ara faz kendi hedefine ulasmis → yeni parca uretemez
-      if (currentCount >= progress.quantityPlanned) continue;
-      // Onceki fazdan kumulatif olarak gecilmis, demek ki WIP buffer var
-      if (currentCount >= prevCount) continue; // buffer bos
-
-      candidates.push({
-        jobOrderNo,
-        wipDiff: prevCount - currentCount,
-        quantityPlanned: progress.quantityPlanned,
-        progress,
-      });
-    }
-
-    if (candidates.length === 0) return null;
-
-    // En fazla WIP biriktirmis is emrini sec (buffer bosaltma onceligi)
-    candidates.sort((a, b) => b.wipDiff - a.wipDiff);
-    const best = candidates[0];
-
-    // Is emri bilgilerini ilk olarak activeJobs'tan al (hala bagli olabilir)
-    for (const job of this.activeJobs.values()) {
-      if (job.jobOrderNo === best.jobOrderNo && job.bomId === bomId) {
-        return {
-          jobOrderNo: job.jobOrderNo,
-          materialCode: job.materialCode,
-          materialName: job.materialName,
-          quantityPlanned: job.quantityPlanned,
-          bomId: job.bomId!,
-        };
-      }
-    }
-
-    // activeJobs'dan cikmis olabilir - bom flow'daki output bilgisini kullan
-    const flow = this.bomFlows.get(bomId);
-    if (!flow) return null;
-
-    return {
-      jobOrderNo: best.jobOrderNo,
-      materialCode: flow.outputProduct.materialCode,
-      materialName: flow.outputProduct.materialName,
-      quantityPlanned: best.quantityPlanned,
-      bomId,
-    };
+    return null;
   }
 
   /**
    * Bu makine su an parca uretebilir mi?
    *
-   * Faz bazli kontrol:
-   * - Faz bu makineye ait mi?
-   * - Faz sayaci hedefe ulasti mi? (planlanan tamamlandi mi?)
-   * - Ara faz ise: onceki faz yeterli WIP uretmis mi? (buffer kontrolu)
+   * - Child hedefine ulasti mi?
+   * - Ara/son faz ise onceki faz yeterli WIP uretmis mi? (buffer kontrolu)
    */
   canProduceOnMachine(machineId: string): boolean {
     const job = this.activeJobs.get(machineId);
     if (!job) return false;
 
-    const progress = this.jobPhaseProgress.get(job.jobOrderNo);
-    if (!progress) return true; // ilk parca - henuz progress yok, uretebilir
-
-    const currentPhaseCount = progress.phaseCounts.get(job.phaseNo) || 0;
-
-    // 1) Bu faz planlanan hedefe ulasti mi?
-    if (currentPhaseCount >= progress.quantityPlanned) {
-      return false; // bu faz icin yeterince uretildi, dur
+    // 1) Child kendi hedefine ulasti mi?
+    if (job.quantityProduced >= job.quantityPlanned) {
+      return false;
     }
 
-    // 2) Ara/son faz ise: onceki fazin kumulatif sayacindan fazla uretemeyiz
-    //    (WIP buffer kontrolu - paralel fazlarda kuyruk bekleme senaryosu)
+    // 2) Ara/son faz WIP buffer kontrolu
     if (job.phaseNo > 1) {
+      const progress = this.parentProgress.get(job.parentJobOrderNo);
+      if (!progress) {
+        // Progress henuz yok (henuz sync olmadi) - ara faz icin beklemeli
+        return false;
+      }
       const prevPhaseCount = progress.phaseCounts.get(job.phaseNo - 1) || 0;
-      if (currentPhaseCount >= prevPhaseCount) {
-        // Onceki faz hala yetismedi, WIP yok - beklemeli
+      if (job.quantityProduced >= prevPhaseCount) {
+        // Onceki fazin kumulatif uretimini gecemeyiz - WIP yetersiz
         return false;
       }
     }
@@ -403,56 +309,36 @@ export class JobOrderSimulator {
   }
 
   /**
-   * Parca uretildi (simulator tarafinda sayac artir)
-   * Backend malzeme tuketimini kendi yapacak
-   *
-   * Faz ilerleme map'ini gunceller, paralel faz kontrolunu saglar.
-   * Dondurdugu deger: gercekten parca uretildi mi (true/false)
+   * Parca uretildi: yerel sayaci artir, progress haritasini guncelle.
+   * Backend Kafka event'i ile child.quantityProduced'i de artiracak.
    */
   partProduced(machineId: string): boolean {
     const job = this.activeJobs.get(machineId);
     if (!job) return false;
 
-    // Onceki kontrolu burada da yap: bu makine uretebilir mi?
     if (!this.canProduceOnMachine(machineId)) {
       return false;
     }
 
-    // Progress map'i al veya olustur
-    let progress = this.jobPhaseProgress.get(job.jobOrderNo);
-    if (!progress) {
-      const bomFlow = job.bomId ? this.bomFlows.get(job.bomId) : null;
-      const lastPhaseNo = bomFlow ? bomFlow.phases.length : 1;
-      progress = {
-        jobOrderNo: job.jobOrderNo,
-        phaseCounts: new Map<number, number>(),
-        quantityPlanned: job.quantityPlanned,
-        lastPhaseNo,
-      };
-      this.jobPhaseProgress.set(job.jobOrderNo, progress);
-    }
-
-    // Bu fazin sayacini artir
-    const newCount = (progress.phaseCounts.get(job.phaseNo) || 0) + 1;
-    progress.phaseCounts.set(job.phaseNo, newCount);
-
-    // Yerel sayac (geriye donuk uyumluluk)
     job.quantityProduced++;
     this.totalProduced++;
 
-    // Bu faz tamamlandi mi? (bu makine icin yeni is beklemesi gerekiyor mu?)
-    if (newCount >= progress.quantityPlanned) {
-      // Faz tamamlandi - bu makineyi serbest birak
-      this.activeJobs.delete(machineId);
+    // Parent progress haritasini guncelle (bir sonraki canProduceOnMachine dogru karar versin)
+    let progress = this.parentProgress.get(job.parentJobOrderNo);
+    if (!progress) {
+      progress = {
+        parentJobOrderNo: job.parentJobOrderNo,
+        quantityPlanned: job.quantityPlanned,
+        phaseCounts: new Map<number, number>(),
+      };
+      this.parentProgress.set(job.parentJobOrderNo, progress);
+    }
+    progress.phaseCounts.set(job.phaseNo, job.quantityProduced);
 
-      // Is emri tamamen tamamlandi mi? (son faz ise)
-      if (job.phaseNo === progress.lastPhaseNo) {
-        this.completedCount++;
-        this.jobPhaseProgress.delete(job.jobOrderNo);
-        console.log(`  [Is Emri] ${job.jobOrderNo} TAMAMLANDI (son faz ${job.phaseNo}, ${newCount}/${progress.quantityPlanned})`);
-      } else {
-        console.log(`  [Faz Tamam] ${job.jobOrderNo} FAZ-${job.phaseNo} bitti (${machineId}) → sonraki faz devam edecek`);
-      }
+    // Child hedefine ulasti mi? Makineyi serbest birak.
+    if (job.quantityProduced >= job.quantityPlanned) {
+      this.activeJobs.delete(machineId);
+      console.log(`  [Child Tamam] ${job.jobOrderNo} FAZ-${job.phaseNo} bitti (${machineId})`);
     }
 
     return true;
@@ -475,7 +361,7 @@ export class JobOrderSimulator {
   getShiftSummary(): string {
     const active = this.getAllActiveJobs();
     return [
-      `  Aktif is emirleri: ${active.length}`,
+      `  Aktif child is emirleri: ${active.length}`,
       `  Tamamlanan: ${this.completedCount}`,
       `  Toplam uretim: ${this.totalProduced} adet`,
       `  Toplam hurda: ${this.totalScrapped} adet`,

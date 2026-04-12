@@ -16,11 +16,16 @@ export interface BackendJobOrder {
   materialName: string;
   quantityPlanned: number;
   quantityProduced: number;
+  quantityCompleted?: number; // son faz (mamul) kumulatif
   quantityScrapped: number;
   operation: string; // machineId
   bomId?: string;
   status: string;
   customer?: string;
+  // Faz bazli alt is emri alanlari
+  parentJobOrderId?: string | null;
+  phaseNo?: number | null;
+  phaseName?: string | null;
 }
 
 export interface BomFlowPhase {
@@ -86,12 +91,41 @@ export class ApiClient {
   // ─── Is Emri Okuma ────────────────────────────────────────────
 
   /**
-   * Aktif (started) is emirlerini getir
+   * Verilen makinelere atanmis aktif CHILD is emirlerini getir.
+   * Backend iki liste doner:
+   *   - assignments: Her makine icin bir child (atama icin)
+   *   - parentProgress: Bu child'larin parent'larinin tum child'lari (WIP buffer hesabi icin)
+   */
+  async getActiveChildrenByMachines(
+    machineIds: string[],
+  ): Promise<{ assignments: BackendJobOrder[]; parentProgress: BackendJobOrder[] }> {
+    try {
+      const res = await this.api.get('/job-orders/active/by-machines', {
+        params: { machineIds: machineIds.join(',') },
+      });
+      const data = res.data || {};
+      // Geriye donuk uyumluluk: eski endpoint array donuyordu
+      if (Array.isArray(data)) {
+        return { assignments: data, parentProgress: data };
+      }
+      return {
+        assignments: data.assignments || [],
+        parentProgress: data.parentProgress || [],
+      };
+    } catch {
+      return { assignments: [], parentProgress: [] };
+    }
+  }
+
+  /**
+   * @deprecated — getActiveChildrenByMachines kullanin.
+   * Eski davranis: tum started child'lari ceker (sayfa sinirli).
    */
   async getActiveJobOrders(): Promise<BackendJobOrder[]> {
     try {
-      const res = await this.api.get('/job-orders', { params: { status: 'started', limit: 50 } });
-      return res.data?.data || [];
+      const res = await this.api.get('/job-orders', { params: { status: 'started', limit: 200, view: 'children' } });
+      const all: BackendJobOrder[] = res.data?.data || [];
+      return all.filter((j) => j.phaseNo != null && j.parentJobOrderId != null);
     } catch {
       return [];
     }

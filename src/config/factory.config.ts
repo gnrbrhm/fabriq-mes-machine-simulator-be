@@ -179,8 +179,9 @@ export const FACTORY_CONFIG: FactoryConfig = {
     {
       machineId: 'PAINT-01', name: 'Toz Boya Hatti (Koyuncu)', type: 'paint_line',
       protocol: 'mqtt', connectionConfig: { brokerUrl: 'mqtt://192.168.1.50:1883', clientId: 'paint-01' },
-      pollingIntervalMs: 2000, cycleTimeSec: 900, cycleTimeVariance: 5, failureProbability: 0.0008,
-      scrapRate: 0.01, warmupTimeSec: 1200, runningPowerKw: 45, idlePowerKw: 8,
+      // [GECICI] Darbogaz giderimi: cycleTimeSec 900 → 90, warmupTimeSec 1200 → 60
+      pollingIntervalMs: 2000, cycleTimeSec: 90, cycleTimeVariance: 10, failureProbability: 0.0008,
+      scrapRate: 0.01, warmupTimeSec: 60, runningPowerKw: 45, idlePowerKw: 8,
       tags: [
         { tagId: 'PAINT01.status', name: 'machine_status', address: 'paint/status', dataType: 'boolean', category: 'status', engineeringUnit: '', deadband: 0, nominalValue: 1, noisePercent: 0, idleValue: 0 },
         { tagId: 'PAINT01.boothtemp', name: 'booth_temperature', address: 'paint/booth_temp', dataType: 'float32', category: 'process_param', engineeringUnit: '°C', deadband: 0.5, minValue: 15, maxValue: 40, nominalValue: 23, noisePercent: 2, idleValue: 20 },
@@ -240,7 +241,8 @@ export const FACTORY_CONFIG: FactoryConfig = {
     {
       machineId: 'INSP-01', name: 'Kalite Kontrol (Mitutoyo CMM)', type: 'inspection',
       protocol: 'rest', connectionConfig: { baseUrl: 'http://192.168.1.80:9090', readEndpoint: '/api/status' },
-      pollingIntervalMs: 5000, cycleTimeSec: 150, cycleTimeVariance: 20, failureProbability: 0.0003,
+      // [GECICI] Darbogaz giderimi: cycleTimeSec 150 → 30 (5x hizli)
+      pollingIntervalMs: 5000, cycleTimeSec: 30, cycleTimeVariance: 15, failureProbability: 0.0003,
       scrapRate: 0, warmupTimeSec: 30, runningPowerKw: 3, idlePowerKw: 1,
       tags: [
         { tagId: 'INSP01.status', name: 'machine_status', address: 'status', dataType: 'boolean', category: 'status', engineeringUnit: '', deadband: 0, nominalValue: 1, noisePercent: 0, idleValue: 0 },

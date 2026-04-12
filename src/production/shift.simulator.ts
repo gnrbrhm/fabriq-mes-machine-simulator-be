@@ -15,11 +15,11 @@ import { FACTORY_CONFIG, type ShiftConfig } from '../config/factory.config';
 
 export type ShiftPhase = 'pre_shift' | 'startup' | 'production' | 'break' | 'post_break' | 'handover' | 'off';
 
-// Gece vardiyasinda calismayan makineler
-const NIGHT_SHIFT_EXCLUDED = ['PAINT-01', 'PACK-01', 'INSP-01'];
+// Gece vardiyasinda calismayan makineler (simulasyon amacli devre disi)
+const NIGHT_SHIFT_EXCLUDED: string[] = [];
 
-// Hafta sonu calismayan makineler (cumartesi yarim gun)
-const WEEKEND_EXCLUDED = ['PAINT-01', 'PACK-01'];
+// Hafta sonu calismayan makineler (simulasyon amacli devre disi)
+const WEEKEND_EXCLUDED: string[] = [];
 
 export class ShiftSimulator {
   private currentShift: ShiftConfig | null = null;

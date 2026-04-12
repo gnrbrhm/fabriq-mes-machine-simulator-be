@@ -270,16 +270,15 @@ async function main() {
       // Makine acma/kapama kontrolu
       if (shouldRun && currentState === 'off') {
         machine.turnOn(simTime);
-        machine.startProduction(simTime);
+        // Uretime gecis asagida (is atama sonrasi) yapilir
       } else if (shouldRun && currentState === 'idle') {
         // Bakim kontrolu - bakim gerekiyorsa maintenance moduna al
         const maintCheck = maintenanceSim.tick(machineId, false, deltaSec, totalSimElapsedSec);
         if (maintCheck.needsMaintenance) {
           machine.startMaintenance(simTime);
           console.log(`  🔧 ${machineId} BAKIM GEREKLI (${maintCheck.maintenanceType})`);
-        } else {
-          machine.startProduction(simTime);
         }
+        // Uretime gecis asagida (is atama sonrasi) yapilir
       } else if (shouldRun && currentState === 'maintenance') {
         // Bakim suresi doldu mu? (state machine otomatik idle'a dondurecek)
         // idle'a donunce bir sonraki tick'te maintenanceCompleted cagirilacak
@@ -296,8 +295,29 @@ async function main() {
       maintenanceSim.tick(machineId, machine.getState() === 'running', deltaSec, totalSimElapsedSec);
 
       // Is emri atama - backend'den iste (BOM bazli planlama)
-      if (shouldRun && machine.getState() !== 'maintenance' && !jobSim.getActiveJob(machineId)) {
-        await jobSim.ensureJobForMachine(machineId);
+      // Onemli: Is varsa uretime gec, yoksa idle'da kal.
+      // Boylece Live Floor'da "dolu ama is yok" durumu olusmaz.
+      if (shouldRun && machine.getState() !== 'maintenance') {
+        const hasJob = jobSim.getActiveJob(machineId);
+        if (!hasJob) {
+          const assigned = await jobSim.ensureJobForMachine(machineId);
+          if (assigned) {
+            // Yeni is atandi: idle ise uretime gecir (warmup → running)
+            if (machine.getState() === 'idle') {
+              machine.startProduction(simTime);
+            }
+          } else {
+            // Is yok: running'den idle'a dus (bekleme moduna gec)
+            if (machine.getState() === 'running' || machine.getState() === 'warmup') {
+              machine.stopProduction(simTime);
+            }
+          }
+        } else {
+          // Is var ama idle ise (ornek: az once atandi, henuz warmup'a girmedi)
+          if (machine.getState() === 'idle') {
+            machine.startProduction(simTime);
+          }
+        }
       }
 
       // Periyodik senkronizasyon (backend'den is emri durumlarini guncelle)
