@@ -244,6 +244,46 @@ export class ApiClient {
     } catch {}
   }
 
+  // ─── Bakim Is Emri (WorkOrder) ─────────────────────────────────
+
+  /**
+   * Bakim is emri olustur (makine bakima girdiginde cagirilir)
+   */
+  async createMaintenanceWorkOrder(params: {
+    machineId: string;
+    type: 'preventive' | 'corrective' | 'predictive' | 'emergency';
+    description: string;
+    priority?: string;
+    failureMode?: string;
+  }): Promise<string | null> {
+    try {
+      const res = await this.api.post('/maintenance/work-orders', {
+        machineId: params.machineId,
+        type: params.type,
+        description: params.description,
+        priority: params.priority || 'normal',
+        failureMode: params.failureMode,
+        createdBy: 'simulator',
+      });
+      return res.data?.id || res.data?.workOrderNo || null;
+    } catch (err: any) {
+      console.log(`  [API] WorkOrder olusturma hatasi: ${err.response?.data?.message || err.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Bakim is emrini tamamla
+   */
+  async completeMaintenanceWorkOrder(workOrderId: string, actualHours: number): Promise<void> {
+    try {
+      await this.api.patch(`/maintenance/work-orders/${workOrderId}/complete`, {
+        actualHours,
+        notes: 'Simulator tarafindan otomatik tamamlandi',
+      });
+    } catch {}
+  }
+
   // ─── SPC ──────────────────────────────────────────────────────
 
   /**
@@ -613,25 +653,6 @@ export class ApiClient {
   }
 
   // ─── Bakim Is Emirleri ────────────────────────────────────────
-
-  /**
-   * Bakim is emri olustur
-   */
-  async createMaintenanceWorkOrder(data: {
-    machineId: string;
-    type: string;
-    priority: string;
-    description: string;
-    estimatedDurationMin?: number;
-    spareParts?: Array<{ code: string; quantity: number }>;
-  }): Promise<any> {
-    try {
-      const res = await this.api.post('/maintenance/work-orders', data);
-      return res.data || null;
-    } catch {
-      return null;
-    }
-  }
 
   // ─── Malzeme Guncelleme ───────────────────────────────────────
 

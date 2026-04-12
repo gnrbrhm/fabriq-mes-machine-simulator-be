@@ -235,6 +235,8 @@ async function main() {
         data.value,
         data.threshold,
       );
+      // Ariza icin corrective bakim is emri olustur
+      await maintenanceSim.alarmTriggered(data.machineId, data.reason || 'Makine alarmi');
     } catch { /* sessiz */ }
   });
 
@@ -275,6 +277,8 @@ async function main() {
         // Bakim kontrolu - bakim gerekiyorsa maintenance moduna al
         const maintCheck = maintenanceSim.tick(machineId, false, deltaSec, totalSimElapsedSec);
         if (maintCheck.needsMaintenance) {
+          // Bakim baslamadan ONCE backend'de WorkOrder olustur
+          await maintenanceSim.maintenanceStarted(machineId, maintCheck.maintenanceType || 'lubrication');
           machine.startMaintenance(simTime);
           console.log(`  🔧 ${machineId} BAKIM GEREKLI (${maintCheck.maintenanceType})`);
         }
@@ -347,6 +351,8 @@ async function main() {
             machineId,
             result.previousState,
             result.state,
+            undefined, // reason
+            activeJob?.jobOrderNo, // aktif is emri bilgisi
           );
         } catch { /* sessiz */ }
       }

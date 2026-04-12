@@ -85,6 +85,7 @@ export class KafkaPublisher {
     previousStatus: MachineStatus,
     currentStatus: MachineStatus,
     reason?: string,
+    activeJobOrderNo?: string,
   ) {
     if (!this.connected) return;
 
@@ -96,6 +97,7 @@ export class KafkaPublisher {
       previousStatus,
       currentStatus,
       reason,
+      activeJobOrderId: activeJobOrderNo || undefined,
     };
 
     await this.producer.send({

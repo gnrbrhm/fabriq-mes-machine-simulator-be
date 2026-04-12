@@ -793,12 +793,7 @@ export class ProductionPlanner {
               machineId: 'CNC-02',
               type: 'preventive',
               priority: 'normal',
-              description: 'Haftalik bakim: Yaglama, filtreleme, kalibrasyon kontrolu',
-              estimatedDurationMin: 240,
-              spareParts: [
-                { code: 'SRF-004', quantity: 20 },
-                { code: 'SRF-014', quantity: 5 },
-              ],
+              description: 'Haftalik bakim: Yaglama, filtreleme, kalibrasyon kontrolu (tahmini 4 saat, SRF-004 x20, SRF-014 x5)',
             });
 
             if (wo) {
@@ -827,12 +822,8 @@ export class ProductionPlanner {
             const wo = await this.api.createMaintenanceWorkOrder({
               machineId: 'WELD-01',
               type: 'corrective',
-              priority: 'urgent',
-              description: 'Acil ariza: Servo motor encoder hatasi - kaynak robotu durdu',
-              estimatedDurationMin: 480,
-              spareParts: [
-                { code: 'SPARE-SERVO-01', quantity: 1 },
-              ],
+              description: 'Acil ariza: Servo motor encoder hatasi - kaynak robotu durdu (tahmini 8 saat, SPARE-SERVO-01 x1)',
+              failureMode: 'mechanical',
             });
 
             if (wo) {
