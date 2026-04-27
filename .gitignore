@@ -2,3 +2,8 @@ node_modules/
 dist/
 .env
 *.log
+
+# Claude Code
+.claude/settings.local.json
+.claude/worktrees
+.claude/memory
